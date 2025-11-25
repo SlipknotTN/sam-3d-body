@@ -50,6 +50,27 @@ def run_moge(model, input_image, device):
 
     return cam_intrinsics
 
+def run_moge_full(model, input_image, device):
+    """
+    `output` has keys "points", "depth", "mask", "normal" (optional) and "intrinsics",
+    The maps are in the same size as the input image. 
+    {
+        "points": (H, W, 3),    # point map in OpenCV camera coordinate system (x right, y down, z forward). For MoGe-2, the point map is in metric scale.
+        "depth": (H, W),        # depth map
+        "normal": (H, W, 3)     # normal map in OpenCV camera coordinate system. (available for MoGe-2-normal)
+        "mask": (H, W),         # a binary mask for valid pixels. 
+        "intrinsics": (3, 3),   # normalized camera intrinsics
+    }
+    """
+    input_image = torch.tensor(
+        input_image / 255, dtype=torch.float32, device=device
+    ).permute(2, 0, 1)
+
+    # Infer w/ MoGe2
+    moge_data = model.infer(input_image)
+
+    return moge_data
+
 
 def denormalize_f(norm_K, height, width):
     # Extract cx and cy from the normalized K matrix
