@@ -174,6 +174,7 @@ class SAM3DBodyEstimator:
             )
             batch["cam_int"] = cam_int.clone()
         else:
+            # Use the default camera intrinsics based on image size
             cam_int = batch["cam_int"].clone()
 
         outputs = self.model.run_inference(

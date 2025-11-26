@@ -43,7 +43,7 @@ def run_moge(model, input_image, device):
     intrinsics = denormalize_f(moge_data["intrinsics"].cpu().numpy(), H, W)
     v_focal = intrinsics[1, 1]
 
-    # override hfov with v_focal
+    # override hfov with v_focal, forcing symmetrical fov
     intrinsics[0, 0] = v_focal
     # add batch dim
     cam_intrinsics = intrinsics[None]
