@@ -8,8 +8,10 @@ import matplotlib
 import numpy as np
 import pickle as pkl
 from notebook.utils import setup_sam_3d_body
-from tools.vis_utils import visualize_sample_together
+from tools.vis_utils import visualize_sample_2d3d_together
 from tools.build_fov_estimator import run_moge_full
+import glob
+from tqdm import tqdm
 
 def colorize_depth(depth: np.ndarray, mask: np.ndarray = None, normalize: bool = True, cmap: str = 'Spectral') -> np.ndarray:
     if mask is None:
@@ -26,7 +28,9 @@ def colorize_depth(depth: np.ndarray, mask: np.ndarray = None, normalize: bool =
 
 def do_parsing():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--image_path", type=str, required=True)
+    parser.add_argument("--input_path", type=str, required=True)
+    parser.add_argument("--input_type", type=str, required=True, choices=["image", "folder"])
+    parser.add_argument("--max_images", type=int, required=False, default=None, help="Maximum number of images to process from the folder")
     parser.add_argument(
         "--bboxes",
         type=float,
@@ -37,6 +41,8 @@ def do_parsing():
     parser.add_argument("--intrinsics_json", type=str, required=False, help="Path to the intrinsic file")
     parser.add_argument("--normalize_depth_viz", action="store_true", default=False, help="Normalize the depth visualization")
     parser.add_argument("--output_dir", type=str, required=True)
+    parser.add_argument("--save_sam_3d_outputs", action="store_true", default=False, help="Save the SAM3D outputs")
+    parser.add_argument("--save_moge_data", action="store_true", default=False, help="Save the MoGe data")
     return parser.parse_args()
 
 def main():
@@ -48,8 +54,6 @@ def main():
         bboxes = np.array(args.bboxes).reshape(-1, 4)
     else:
         bboxes = None
-    assert os.path.exists(args.image_path), "Image path does not exist"
-
     cam_matrix = None
     if args.intrinsics_json is not None:
         intrinsic_params = json.load(open(args.intrinsics_json, "r"))
@@ -66,30 +70,56 @@ def main():
     # Set up the estimator
     estimator = setup_sam_3d_body(hf_repo_id="facebook/sam-3d-body-dinov3")
 
-    # Load and process image
-    img = cv2.imread(args.image_path)
-    outputs = estimator.process_one_image(
-        img=cv2.cvtColor(img, cv2.COLOR_BGR2RGB),
-        bboxes=bboxes,
-        cam_int=cam_matrix
-    )
+    if args.input_type == "image":
+        input_paths = [args.input_path]
+    elif args.input_type == "folder":
+        input_paths = sorted(glob.glob(os.path.join(args.input_path, "*.jpg")))
+        print(f"Found {len(input_paths)} images in the folder")
+        if args.max_images is not None:
+            input_paths = input_paths[:args.max_images]
+            print(f"Using only {len(input_paths)} images")
+    else:
+        raise ValueError("Invalid input type")
 
-    # WARNING: Not optimized, the model could be already run in the estimator.process_one_image function to get the intrinsics
-    moge_data = run_moge_full(estimator.fov_estimator.fov_estimator, img, estimator.device)
-    depth_viz = colorize_depth(
-        depth=moge_data["depth"].cpu().numpy(),
-        mask=moge_data["mask"].cpu().numpy(),
-        normalize=args.normalize_depth_viz,
-    )
-
-    # Visualize and save results
-    rend_img = visualize_sample_together(img, outputs, estimator.faces)
     os.makedirs(args.output_dir, exist_ok=True)
-    cv2.imwrite(os.path.join(args.output_dir, Path(args.image_path).stem + "_full.jpg"), rend_img.astype(np.uint8))
-    cv2.imwrite(os.path.join(args.output_dir, Path(args.image_path).stem + "_depth.jpg"), depth_viz)
 
-    pkl.dump(outputs, open(os.path.join(args.output_dir, Path(args.image_path).stem + "_sam3d_outputs.pkl"), "wb"))
-    pkl.dump(moge_data, open(os.path.join(args.output_dir, Path(args.image_path).stem + "_moge_data.pkl"), "wb"))
+    for input_path in tqdm(input_paths):
+        assert os.path.exists(input_path), "Image path does not exist"
+        # Load and process image
+        img = cv2.imread(input_path)
+        outputs = estimator.process_one_image(
+            img=cv2.cvtColor(img, cv2.COLOR_BGR2RGB),
+            bboxes=bboxes,
+            cam_int=cam_matrix
+        )
+
+        # WARNING: Not optimized, the model could be already run in the estimator.process_one_image function to get the intrinsics
+        moge_data = run_moge_full(estimator.fov_estimator.fov_estimator, img, estimator.device)
+        depth_viz = colorize_depth(
+            depth=moge_data["depth"].cpu().numpy(),
+            mask=moge_data["mask"].cpu().numpy(),
+            normalize=args.normalize_depth_viz,
+        )
+
+        # Visualize and save results
+
+        # Draw over original image
+        img_keypoints, img_mesh = visualize_sample_2d3d_together(img, outputs, estimator.faces)
+        depth_filename = "depth" if args.normalize_depth_viz else "depth_unmorm"
+        cv2.imwrite(os.path.join(args.output_dir, Path(input_path).stem + "_img_keypoints.jpg"), img_keypoints.astype(np.uint8))
+        cv2.imwrite(os.path.join(args.output_dir, Path(input_path).stem + "_img_meshes.jpg"), img_mesh.astype(np.uint8))
+        cv2.imwrite(os.path.join(args.output_dir, Path(input_path).stem + f"_{depth_filename}.jpg"), depth_viz)
+
+        # Draw over the depth image
+        img_depth_keypoints, img_depth_mesh = visualize_sample_2d3d_together(depth_viz, outputs, estimator.faces)
+        cv2.imwrite(os.path.join(args.output_dir, Path(input_path).stem + f"_{depth_filename}_keypoints.jpg"), img_depth_keypoints.astype(np.uint8))
+        cv2.imwrite(os.path.join(args.output_dir, Path(input_path).stem + f"_{depth_filename}_meshes.jpg"), img_depth_mesh.astype(np.uint8))
+
+        # Save results
+        if args.save_sam_3d_outputs:
+            pkl.dump(outputs, open(os.path.join(args.output_dir, Path(input_path).stem + "_sam3d_outputs.pkl"), "wb"))
+        if args.save_moge_data:
+            pkl.dump(moge_data, open(os.path.join(args.output_dir, Path(input_path).stem + "_moge_data.pkl"), "wb"))
 
     print("Done!")
 
