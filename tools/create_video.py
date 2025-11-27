@@ -22,6 +22,7 @@ def main():
     print(args)
 
     input_paths = sorted(glob.glob(os.path.join(args.input_path, f"*{args.image_suffix}.jpg")))
+    assert len(input_paths) > 0, "No images found"
     print(f"Found {len(input_paths)} images")
 
     os.makedirs(os.path.dirname(args.output_video_path), exist_ok=True)

@@ -41,8 +41,9 @@ def do_parsing():
     parser.add_argument("--intrinsics_json", type=str, required=False, help="Path to the intrinsic file")
     parser.add_argument("--normalize_depth_viz", action="store_true", default=False, help="Normalize the depth visualization")
     parser.add_argument("--output_dir", type=str, required=True)
-    parser.add_argument("--save_sam_3d_outputs", action="store_true", default=False, help="Save the SAM3D outputs")
-    parser.add_argument("--save_moge_data", action="store_true", default=False, help="Save the MoGe data")
+    parser.add_argument("--save_sam_3d_outputs", action="store_true", default=False, help="Save the SAM3D outputs dict as a pickle file")
+    parser.add_argument("--save_moge_full_data", action="store_true", default=False, help="Save the MoGe data dict as a pickle file")
+    parser.add_argument("--save_moge_depth_only", action="store_true", default=False, help="Save the MoGe depth only as a numpy array")
     return parser.parse_args()
 
 def main():
@@ -81,7 +82,11 @@ def main():
     else:
         raise ValueError("Invalid input type")
 
+    assert len(input_paths) > 0, "No images found"
     os.makedirs(args.output_dir, exist_ok=True)
+
+    H, W, _ = cv2.imread(input_paths[0]).shape
+    print(f"Image size W x H: {W}x{H}")
 
     for input_path in tqdm(input_paths):
         assert os.path.exists(input_path), "Image path does not exist"
@@ -105,7 +110,7 @@ def main():
 
         # Draw over original image
         img_keypoints, img_mesh = visualize_sample_2d3d_together(img, outputs, estimator.faces)
-        depth_filename = "depth" if args.normalize_depth_viz else "depth_unmorm"
+        depth_filename = "depth" if args.normalize_depth_viz else "depth_unnorm"
         cv2.imwrite(os.path.join(args.output_dir, Path(input_path).stem + "_img_keypoints.jpg"), img_keypoints.astype(np.uint8))
         cv2.imwrite(os.path.join(args.output_dir, Path(input_path).stem + "_img_meshes.jpg"), img_mesh.astype(np.uint8))
         cv2.imwrite(os.path.join(args.output_dir, Path(input_path).stem + f"_{depth_filename}.jpg"), depth_viz)
@@ -118,9 +123,11 @@ def main():
         # Save results
         if args.save_sam_3d_outputs:
             pkl.dump(outputs, open(os.path.join(args.output_dir, Path(input_path).stem + "_sam3d_outputs.pkl"), "wb"))
-        if args.save_moge_data:
+        if args.save_moge_full_data:
             pkl.dump(moge_data, open(os.path.join(args.output_dir, Path(input_path).stem + "_moge_data.pkl"), "wb"))
-
+        if args.save_moge_depth_only:
+            np.save(os.path.join(args.output_dir, Path(input_path).stem + f"_moge_depth.npy"), moge_data["depth"].cpu().numpy())
+       
     print("Done!")
 
 if __name__ == "__main__":
