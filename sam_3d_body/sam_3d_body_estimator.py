@@ -5,6 +5,7 @@ import cv2
 
 import numpy as np
 import torch
+import time
 
 from sam_3d_body.data.transforms import (
     Compose,
@@ -38,12 +39,20 @@ class SAM3DBodyEstimator:
         # For mesh visualization
         self.faces = self.model.head_pose.faces.cpu().numpy()
 
+        self.profiling_times = {"sam3d_body": []}
+
         if self.detector is None:
             print("No human detector is used...")
+        else:
+            self.profiling_times["detector"] = []
         if self.sam is None:
             print("Mask-condition inference is not supported...")
+        else:
+            self.profiling_times["sam"] = []
         if self.fov_estimator is None:
             print("No FOV estimator... Using the default FOV!")
+        else:
+            self.profiling_times["fov_estimator"] = []
 
         self.transform = Compose(
             [
@@ -72,6 +81,7 @@ class SAM3DBodyEstimator:
         nms_thr: float = 0.3,
         use_mask: bool = False,
         inference_type: str = "full",
+        profiling: bool = False,
     ):
         """
         Perform model prediction in top-down format: assuming input is a full image.
@@ -112,6 +122,7 @@ class SAM3DBodyEstimator:
                 img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
                 image_format = "bgr"
             print("Running object detector...")
+            before_detector = time.time()
             boxes = self.detector.run_human_detection(
                 img,
                 det_cat_id=det_cat_id,
@@ -119,7 +130,10 @@ class SAM3DBodyEstimator:
                 nms_thr=nms_thr,
                 default_to_full_image=False,
             )
-            print("Found boxes:", boxes)
+            after_detector = time.time()
+            if profiling:
+                self.profiling_times["detector"].append(after_detector - before_detector)
+            print(f"Found {len(boxes)} boxes")
             self.is_crop = True
         else:
             boxes = np.array([0, 0, width, height]).reshape(1, 4)
@@ -149,7 +163,11 @@ class SAM3DBodyEstimator:
         elif use_mask and self.sam is not None:
             print("Running SAM to get mask from bbox...")
             # Generate masks using SAM2
+            before_sam = time.time()
             masks, masks_score = self.sam.run_sam(img, boxes)
+            after_sam = time.time()
+            if profiling:
+                self.profiling_times["sam"].append(after_sam - before_sam)
         else:
             masks, masks_score = None, None
 
@@ -169,14 +187,20 @@ class SAM3DBodyEstimator:
         elif self.fov_estimator is not None:
             print("Running FOV estimator ...")
             input_image = batch["img_ori"][0].data
+            before_fov_estimator = time.time()
             cam_int = self.fov_estimator.get_cam_intrinsics(input_image).to(
                 batch["img"]
             )
+            after_fov_estimator = time.time()
+            if profiling:
+                self.profiling_times["fov_estimator"].append(after_fov_estimator - before_fov_estimator)
             batch["cam_int"] = cam_int.clone()
         else:
             # Use the default camera intrinsics based on image size
             cam_int = batch["cam_int"].clone()
 
+        print("Running Sam3D Body inference...")
+        before_inference = time.time()
         outputs = self.model.run_inference(
             img,
             batch,
@@ -184,6 +208,9 @@ class SAM3DBodyEstimator:
             transform_hand=self.transform_hand,
             thresh_wrist_angle=self.thresh_wrist_angle,
         )
+        after_inference = time.time()
+        if profiling:
+            self.profiling_times["sam3d_body"].append(after_inference - before_inference)
         if inference_type == "full":
             pose_output, batch_lhand, batch_rhand, _, _ = outputs
         else:
