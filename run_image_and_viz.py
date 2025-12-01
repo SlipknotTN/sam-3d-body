@@ -40,7 +40,7 @@ def do_parsing():
     )
     parser.add_argument("--intrinsics_json", type=str, required=False, help="Path to the intrinsic file")
     parser.add_argument("--normalize_depth_viz", action="store_true", default=False, help="Normalize the depth visualization")
-    parser.add_argument("--output_dir", type=str, required=True)
+    parser.add_argument("--output_dir", type=str, required=False, help="Output directory to save the results")
     parser.add_argument("--save_sam_3d_outputs", action="store_true", default=False, help="Save the SAM3D outputs dict as a pickle file")
     parser.add_argument("--save_moge_full_data", action="store_true", default=False, help="Save the MoGe data dict as a pickle file")
     parser.add_argument("--save_moge_depth_only", action="store_true", default=False, help="Save the MoGe depth only as a numpy array")
@@ -98,6 +98,10 @@ def main():
             cam_int=cam_matrix
         )
 
+        # Visualize and save results
+
+        # Draw over original image
+        
         # WARNING: Not optimized, the model could be already run in the estimator.process_one_image function to get the intrinsics
         moge_data = run_moge_full(estimator.fov_estimator.fov_estimator, img, estimator.device)
         depth_viz = colorize_depth(
@@ -106,9 +110,6 @@ def main():
             normalize=args.normalize_depth_viz,
         )
 
-        # Visualize and save results
-
-        # Draw over original image
         img_keypoints, img_mesh = visualize_sample_2d3d_together(img, outputs, estimator.faces)
         depth_filename = "depth" if args.normalize_depth_viz else "depth_unnorm"
         cv2.imwrite(os.path.join(args.output_dir, Path(input_path).stem + "_img_keypoints.jpg"), img_keypoints.astype(np.uint8))
